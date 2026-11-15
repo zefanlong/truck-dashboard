@@ -326621,19 +326621,27 @@ function reportStats(rows){
  const a=diagnosticStats(rows),bothOn=a.phase.find(r=>r.环节==='两环节均准时').票数;
  return {...a,bothOn,bothRate:a.paired?bothOn/a.paired:null};
 }
+function bothStageDelay({pickupDelay,deliveryDelay}){
+ if(pickupDelay==null||deliveryDelay==null)return null;
+ return Math.max(pickupDelay,deliveryDelay);
+}
 function delayToleranceRows(records){
  const pickup=records.filter(r=>r.pickupDelay!=null);
  const delivery=records.filter(r=>r.deliveryDelay!=null);
+ const pairedDelays=records.map(bothStageDelay).filter(delay=>delay!=null);
  return [0,1,2,3].map(days=>{
   const pickupWithin=pickup.filter(r=>r.pickupDelay<=days).length;
   const deliveryWithin=delivery.filter(r=>r.deliveryDelay<=days).length;
+  const bothWithin=pairedDelays.filter(delay=>delay<=days).length;
   return {
    days,
    threshold:`容许 ${days} 天`,
    pickupRate:pickup.length?pickupWithin/pickup.length:null,
    deliveryRate:delivery.length?deliveryWithin/delivery.length:null,
+   bothRate:pairedDelays.length?bothWithin/pairedDelays.length:null,
    pickupCount:pickup.length?`${pickupWithin} / ${pickup.length} 票`:'无可判定样本',
    deliveryCount:delivery.length?`${deliveryWithin} / ${delivery.length} 票`:'无可判定样本',
+   bothCount:pairedDelays.length?`${bothWithin} / ${pairedDelays.length} 票`:'无可判定样本',
   };
  });
 }
@@ -326656,8 +326664,9 @@ function delayPortrait(records){
 const chartId='time-delay-tolerance';
 const chartTitle='不同延误容许度下的达标率';
 const measures={
- pickupRate:{name:'提取',delay:'pickupDelay'},
- deliveryRate:{name:'送达',delay:'deliveryDelay'},
+ pickupRate:{name:'提取',getDelay:record=>record.pickupDelay},
+ deliveryRate:{name:'送达',getDelay:record=>record.deliveryDelay},
+ bothRate:{name:'双环节',getDelay:bothStageDelay},
 };
 
 function DelayToleranceChart({caption,records,sourceRows,queryId,openRecords}){
@@ -326670,7 +326679,7 @@ function DelayToleranceChart({caption,records,sourceRows,queryId,openRecords}){
   spec:{
    type:'bar',
    x:'threshold',
-   y:['pickupRate','deliveryRate'],
+   y:['pickupRate','deliveryRate','bothRate'],
    yDomain:[0,1],
    yTickCount:5,
    showValues:true,
@@ -326680,19 +326689,23 @@ function DelayToleranceChart({caption,records,sourceRows,queryId,openRecords}){
    startAtZero:true,
    stackable:false,
    valueDecimals:1,
-   colors:{pickupRate:'var(--chart-1)',deliveryRate:'var(--chart-3)'},
-   legend:{labels:{pickupRate:'提取',deliveryRate:'送达'}},
-   tooltipFields:[{field:'pickupCount',label:'提取达标 / 样本'},{field:'deliveryCount',label:'送达达标 / 样本'}],
+   colors:{pickupRate:'var(--chart-1)',deliveryRate:'var(--chart-3)',bothRate:'var(--chart-4)'},
+   legend:{labels:{pickupRate:'提取',deliveryRate:'送达',bothRate:'双环节'}},
+   tooltipFields:[
+    {field:'pickupCount',label:'提取达标 / 样本'},
+    {field:'deliveryCount',label:'送达达标 / 样本'},
+    {field:'bothCount',label:'双环节达标 / 样本'},
+   ],
   },
  });
 
  function getMarkActions({row,field}){
   const measure=measures[field];
   if(!measure)return [];
-  const samples=records.filter(record=>record[measure.delay]!=null);
+  const samples=records.filter(record=>measure.getDelay(record)!=null);
   const groups=[
-   ['查看达标订单','达标',samples.filter(record=>record[measure.delay]<=row.days)],
-   ['查看仍超期订单','仍超期',samples.filter(record=>record[measure.delay]>row.days)],
+   ['查看达标订单','达标',samples.filter(record=>measure.getDelay(record)<=row.days)],
+   ['查看仍超期订单','仍超期',samples.filter(record=>measure.getDelay(record)>row.days)],
   ];
   return groups.filter(([, ,orders])=>orders.length).map(([label,result,orders])=>({
    label:`${label}（${orders.length}票）`,
@@ -326701,7 +326714,7 @@ function DelayToleranceChart({caption,records,sourceRows,queryId,openRecords}){
  }
 
  return jsxRuntime.jsx(MonthlyEvidenceChart, { ...chart, queryId: queryId, sourceRows: sourceRows, height: 220, chartOptions: {getMarkActions}, children: 
-  jsxRuntime.jsx('p', { className: "time-report-caption", children: "0 天为准时或提前。其余各档累计计入延误不超过该天数的订单，按自然日计算，以各环节可判定订单为分母。" })
+  jsxRuntime.jsx('p', { className: "time-report-caption", children: "按自然日累计计算，0 天为准时或提前。双环节仅统计提取和送达均可判定的订单，两个环节都在容许天数内才算达标。" })
  });
 }
 
